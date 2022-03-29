@@ -1,0 +1,358 @@
+---
+title: "Network Analysis: Matsukata's Confiscated Collection"
+subtitle: "DHAI - PSL Intensive Week - Project 1"
+author: "Léa Saint-Raymond & Mathieu Rimet-Meille"
+date: "28/03/2022"
+output: html_document
+---
+
+## Creating a project, a script and importing the dataset
+
+Create a new project (File \> New Project) specifying a directory. Download the dataset as a csv file in the folder containing the project. Then, create a script (File \> New File \> R Script or R Markdown). Install the packages with the command `install.packages("name_of_the_package")` and load them using the function `library()`. Now, you can start coding !
+
+```{r setup, include=T, warning = FALSE, message = FALSE}
+
+library(tidyverse) # This package contains several attaches packages : ggplot, tibble, tidyr, readr, purr, dplyr, stringr and forcats
+
+orga_expo <- read.csv("data/organisation_expos.csv", encoding = "UTF-8") # Specify the path. 
+# Here my dataset is saved in the folder "data" in the created project. 
+
+
+glimpse(orga_expo) # To see how the variables are coded
+head(orga_expo) # To see the first rows of the imported dataset
+tail(orga_expo) # To see the last rows of the imported dataset
+
+```
+
+## Transforming the original dataset into two data frames and recoding variables
+
+The packages for network analysis require a date frame for nodes with an "id" column as well as a data frame for links with "from" and "to" columns, especially for the later used package `visNetwork` for interactive visualization. Here, two people are linked when they share a common identifier. We need to transform this dataset so as to have two data frames for both vertices and edges. In the case of the Matsukata's collection art exhibitions, the links are undirected.
+
+```{r reseaux, echo=TRUE, message=FALSE, warning=FALSE}
+
+library(igraph) # for basic measures concerning networks analysis
+library(questionr) # for recoding variables and reordering levels
+
+organisateurs_expo <- orga_expo %>% select(organisateur, fonction)
+
+# Creating a nodes data frame
+nodes_vertices <- organisateurs_expo %>%
+  distinct(organisateur, .keep_all = T) 
+
+nodes_vertices <- rowid_to_column(nodes_vertices, "id")
+
+orga_expo$nom <- orga_expo$organisateur
+orga_expo <- merge(orga_expo, nodes_vertices, by = "organisateur")
+
+# Creating a links data frame
+links_edges <- orga_expo %>% group_by(ID_E, ) %>%
+  filter(n()>=2) %>% group_by(ID_E) %>%
+ do(data.frame(t(combn(.$id, 2)), stringsAsFactors=FALSE))
+
+# Reordering variables in the links data frame
+col_order <- c("X1", "X2", "ID_E")
+links_edges <- links_edges[,col_order]
+
+links_edges <- rename(links_edges, from = X1, to = X2)
+
+# Here the links are undirected
+links_edges$type <- "undirected"
+
+
+# Interactive recoding is possible thanks to the questionr package. Click on the Addins.
+
+# Recoding nodes_vertices$fonction into nodes_vertices$fonction_rec
+
+nodes_vertices$fonction_rec <- nodes_vertices$fonction %>%
+  fct_recode(
+    "Unknown" = "",
+    "Politician" = "Adjoint délégué aux Beaux-Arts",
+    "Cultural administration" = "Administrater général de la Bibliothèque nationale",
+    "Cultural administration" = "Administrateur général",
+    "Cultural administration" = "Chef du service des Beaux-Arts du G.M.Z.F.O.",
+    "Cultural administration" = "Chefe des Services administratifs de la Réunion des Musées Nationaux",
+    "Curator" = "Conservateur au Musée National d'Art Moderne",
+    "Curator" = "Conservateur des Musées de Nice",
+    "Curator" = "Conservateur du Cabinet des Dessins du Musée du Louvre",
+    "Curator" = "Conservateur du Département des Peintures du Musée du Louvre",
+    "Curator" = "Conservateur du Musée de Rennes",
+    "Curator" = "Conservateur du Petit Palais",
+    "Curator" = "Conservateur en Chef du Musée d'Art Moderne",
+    "Cultural administration" = "de l'Académie française, Administrateur du Centre Universitaire Méditerranéen",
+    "Politician" = "Député-Maire de Nice, Président du Conseil Général des Alpes-Maritimes",
+    "Cultural administration" = "Directeur des Musées de France",
+    "Cultural administration" = "Directeur Général des Arts et des Lettres",
+    "Other occupation" = "Général d'armée Koenig, Commandant en Chef français en Allemagne",
+    "Politician" = "Haut-Commissaire adjoint de la République en Allemagne",
+    "Cultural administration" = "Inspecteur des Monuments historiques",
+    "Cultural administration" = "Inspecteur général de musées de province",
+    "Politician" = "Inspecteur général, préfet d'Ille-et-Villaine",
+    "Politician" = "Maire de Rennes",
+    "Politician" = "Membre de l'Institut, adjoint au Maire de Nice",
+    "Curator" = "Membre de l'Institut, Conservateur en chef des Musées Nationaux",
+    "Politician" = "Préfet des Alpes-Maritimes",
+    "Cultural administration" = "Président du Conseil des Musées Nationaux",
+    "Cultural administration" = "recteur de l'Université de Rennes",
+    "Politician" = "Secrétaire d'État aux Beaux-Arts",
+    "Other occupation" = "Trésorier de la Société des Amis du Louvre"
+  )
+
+# Renaming the variable nodes_vertices$fonction_rec 
+nodes_vertices <- nodes_vertices %>% rename(occupation = fonction_rec)
+
+freq(table(nodes_vertices$occupation, useNA = "ifany"), total = T) # Here NA values were re-coded as "Unknown" values.
+
+
+```
+
+## Centrality measures
+
+Centrality measures make possible to compare the place of a node in the graph to the other nodes. Different centrality measures exist. The most known ones are the measures of the degree centrality and the betweenness centrality. A node can have a low degree centrality and a high betweenness centrality. In the literature, people with a high betweenness centrality are often qualified as brokers or go-betweens.
+
+Here is an overview of the most used centrality measures :
+
+-   Degree centrality : The degree centrality measure corresponds to the number of edges of a given node. In a directed graph, it is possible to make a difference between the number of links from the given node A to the others and the number of edges from the other nodes to the given node A.
+-   Betweenness centrality : This measure corresponds to the number shortest paths between any couples of nodes in the graph that passes through a given node.
+-   Eccentricity : It is calculated as the the number of links needed to connect the most distant node from the given node. The higher the eccentricity is, the less central the node is.
+-   Closeness centrality : The closeness centrality indicates to what extent a node is close to the others in the graph. The closeness centrality is defined by the inverse of the average of the shortest paths length. The interval is between 0 and 1.
+
+It is possible to calculate the centrality measures using the functions of the package `ìgraph`.
+
+```{r centrality, echo=TRUE, fig.show='hide', message=FALSE, warning=FALSE}
+graph <- graph.data.frame(links_edges, directed = FALSE)
+
+# The igraph package provides a wide range of functions for networks analysis. You can see the detailed documentation for this package writing the command ?igraph in the console or in the CRAN documentation.
+# Good to know: it is also possible to convert an igraph object into an adjacency matrix with the function as_adjacency_matrix() or into an edge list with as_edgelist()
+#V(graph) Information for the nodes
+#E(graph) Information for the links
+
+# Network density with edge_density function from igraph
+graph <- simplify(graph, remove.multiple = T) 
+density <- edge_density(graph)
+
+# Adding centrality measures to the data frame nodes_vertices
+degree_centrality <- igraph::degree(graph)
+nodes_vertices$degree_centrality <- degree_centrality[match(nodes_vertices$id, names(degree_centrality))]
+
+
+betweenness <- igraph::betweenness(graph)
+nodes_vertices$betweenness <- betweenness[match(nodes_vertices$id,names(betweenness))]
+
+
+eccentricity_val <- igraph::eccentricity(graph)
+nodes_vertices$eccentricity <- eccentricity_val[match(nodes_vertices$id,names(eccentricity_val))]
+
+
+closeness_centrality <- igraph::closeness(graph)
+
+nodes_vertices$closeness_centrality <- closeness_centrality[match(nodes_vertices$id,names(closeness_centrality))]
+
+```
+
+## Community detection
+
+In order to detect groups within the graph, it is possible to use clustering methods based on modularity measures. It measures the density of connections between vertices so as to highlight modules. Nodes within a same community share a high modularity corresponding to dense connections and a low modularity with nodes of other groups. Different methods for community detection exist. Here, the clustering method developed by researchers in Louvain-La-Neuve is used so as to find groups in the graph. The Louvain method for community detection is particularly adapted to large networks. The package `igraph` offers a wide range of clustering methods.
+
+```{r clustering, message=FALSE, warning=FALSE}
+
+library(igraph)
+
+net <- graph_from_data_frame(d=links_edges, vertices=nodes_vertices, directed=F)
+
+# For networks visualization, different layouts can be chosen.
+plot(net, layout=layout_with_fr)
+
+plot(graph, layout = layout_in_circle)
+
+
+net <- simplify(net, remove.multiple = F, remove.loops = T)
+plot(
+  simplify(net), 
+     vertex.size= 0.01,
+     edge.arrow.size=0.001,
+     vertex.label.cex = 0.75,
+     vertex.label.color = "black",
+     vertex.frame.color = adjustcolor(
+       "white", alpha.f = 0
+       ),
+     vertex.color = adjustcolor(
+       "grey", alpha.f = 0
+       ),edge.color=adjustcolor(
+         1, alpha.f = 0.2
+         ),
+     display.isolates=FALSE,
+     vertex.label=NA
+     )
+
+
+#Louvain method for community detection using modularity measures (Subnetworks with high modularity have dense connections between the nodes within clusters but few connections with nodes in other different clusters)
+clust <- cluster_louvain(net)
+
+#Adding communities detected to the data frame
+nodes_vertices$group <- cluster_louvain(net)$membership 
+
+plot(clust, net, vertex.label = "", edge.curved = 1, layout=layout_with_fr)
+
+
+
+```
+
+## Interactive visualization
+
+It is possible to create interactive visualizations with R. Here, the package `visNetwork` is used. However, many packages for networks analysis exist. You can check R documentation which is available online. For further information, have a look on the following website <https://kateto.net/network-visualization>.
+
+```{r viz, echo=TRUE, message=FALSE, warning=FALSE}
+library(visNetwork)
+
+# Nodes visualization settings
+
+nodes_vertices$title  <- nodes_vertices$fontion 
+nodes_vertices$label  <- nodes_vertices$organisateur 
+nodes_vertices$size   <- nodes_vertices$degree_centrality/2 
+nodes_vertices <- nodes_vertices %>% mutate(font.size = degree_centrality/5)
+nodes_vertices$color.highlight.border <- "darkred"
+
+# Links visualization settings
+links_edges$smooth.enabled <- c(TRUE)
+links_edges$smooth.type <- c("curvedCW")
+
+# Create continuous color palette.
+colpalette <- colorRampPalette(c('#E0F4FF','#003049'))
+
+# Match palette to the detected groups with Louvain method
+nodes_vertices$color <- c(colpalette(7))[nodes_vertices$group]
+
+# If you want to export a data frame in R as a csv file, you can use the following command :
+#write.csv(nodes_vertices, file = "nodes_organizers.csv", row.names = F)
+
+
+# Legend settings
+colors_nodes_group <- unique(nodes_vertices$color)
+lnodes <- data.frame(id = 1:7, label = c(1:7), shape = "dot", color = colors_nodes_group) 
+lnodes$label <- as.factor(lnodes$label)
+
+# Recoding lnodes$label
+lnodes$label <- lnodes$label %>%
+  fct_recode(
+    "Group 1" = "1",
+    "Group 2" = "2",
+    "Group 3" = "3",
+    "Group 4" = "4",
+    "Group 5" = "5",
+    "Group 6" = "6",
+    "Group 7" = "7"
+  ) 
+
+lnodes <- lnodes %>% mutate(title=label)
+
+# Visualization
+
+# The core of the following code is the function visNetwork(). All other functions are visualization options
+
+g <- visNetwork(nodes_vertices, links_edges, background = "#eeefff", main = list(text = "Network of the organizers of the Matsukata's collection art exhibitons (1946-1958)", style = "font-family:Arial;text-align:center;color:black;"), submain = list(text = "Léa Saint-Raymond (2019)", style = "font-family:Arial;text-align:center;color:black;")) %>% 
+  visNodes(shadow = T, color = c(background = "lightblue", highlight = "orange", border = "black", borderWidth = 2, borderWidthSelected = 2), physics = F, scaling = list(min = 1, max = 10)) %>%
+  visEdges(color = list(color = 'lightgrey', highlight ="darkgrey")) %>%
+  visIgraphLayout(layout = "layout_with_fr") %>% 
+  visPhysics(solver = "forceAtlas2Based", forceAtlas2Based = list(gravitationConstant = -5000000, centralGravity = 0.001, avoidOverlap = 1)) %>%
+  visOptions(highlightNearest = TRUE, selectedBy = "occupation")  %>%
+  visLegend(useGroups = FALSE, addNodes = lnodes, main = list(text = "Communities", style = "font-family:Arial;text-align:center;color:black;"))
+
+# Avoiding zoom problems during the visualization
+g <- g  %>% visEvents(type = "once", startStabilizing = "function() {this.moveTo({scale:0.1})}") %>% visPhysics(stabilization = FALSE)
+
+
+#Saving the network as a html file
+#visSave(g, file = "matsukata_network.html", selfcontained = T)
+
+
+g 
+
+```
+
+
+
+
+## Social composition of the detected clusters
+
+Little is known about the organizers of the Matsukata's collection art exhibitions. For instance, the values concerning the occupation is for a large number of the organizers unknown. It is possible to add biographical data to the nodes data frame. Export it as a csv file using the command `write.csv(name_of_my_node_data_frame, file = "name_of_the_exported_data_frame.csv", row.names = F)`. Use the software OpenRefine to add biographical information concerning the organizers of the Matsukata's confiscated collection art exhibitions. Then, re-import the data frame with new information in R. It is possible to make frequency and cross tables to have a better comprehension of the composition of the detected groups.
+
+```{r analyse des groupes, message=FALSE, warning=FALSE}
+library(gtsummary) # For frequency tables and cross tables
+library(GGally)
+
+nodes_organizers_complete <- read.csv("nodes_organizers_complete.csv", encoding = "UTF-8")
+
+# Common alternative to gtsummary for frequecy tables and cross tables
+freq(table(nodes_organizers_complete$group), total = T)
+
+# Recoding the variable nodes_organizers_complete$position
+nodes_organizers_complete$position <- nodes_organizers_complete$fonction_complet %>%
+  fct_recode(
+    NULL = "",
+    "Cultural administration" = "Curator",
+    "Administrative official" = "Diplomat",
+    "Other position" = "Member of the armed forces",
+    "Other position" = "Miscellaneous"
+  )
+
+# Recoding the variable nodes_organizers_complete$country
+nodes_organizers_complete$country <- nodes_organizers_complete$country %>%
+  fct_recode(
+    NULL = "",
+    "Netherlands" = "Kingdom of the Netherlands",
+    "Other country" = "Canada",
+    "Other country" = "Finland",
+    "Other country" = "Greece",
+    "Other country" = "Norway"
+  )
+
+# Recoding de nodes_organizers_complete$sex
+nodes_organizers_complete$sex <- nodes_organizers_complete$sex %>%
+  fct_recode(
+    "Female" = "female",
+    "Male" = "male"
+  )
+
+   
+# Reordering levels: nodes_organizers_complete$position
+nodes_organizers_complete$position <- nodes_organizers_complete$position %>%
+  fct_relevel(
+    "Artist", "Art collector", "Art critic", "Academic", "Cultural administration",
+    "Politician", "Administrative official", "Other position"
+    )
+# Reordering levels: nodes_organizers_complete$country
+nodes_organizers_complete$country <- nodes_organizers_complete$country %>%
+  fct_relevel(
+    "Austria", "Belgium", "France", "Germany", "Italy", "Netherlands",
+    "Poland", "Spain", "Switzerland", "United Kingdom", "United States of America",
+    "Venezuela", "Other country"
+  )
+
+# gtsummary settings for french language:
+# theme_gtsummary_language(language = "fr", decimal.mark = ",", big.mark = " ")
+
+# Transforming an integer variable into a categorical one
+nodes_organizers_complete$group <- as.factor(nodes_organizers_complete$group)
+
+# English settings
+theme_gtsummary_language(language = "en")
+
+# Frequency tables
+tbl_summary(nodes_organizers_complete, include = c(sex, group, country, position, degree_centrality))
+
+# Cross tables
+nodes_organizers_complete %>% 
+  tbl_summary(
+    include = c(sex, position, country, degree_centrality), 
+    by = group,
+    label = c(sex ~ "Sex", position ~ "Position", country ~ "Country", degree_centrality ~ "Degree centrality"),
+    statistic = list(
+      all_categorical() ~ "{p}% ({n})",
+      all_continuous() ~ "{mean} [{median}]"
+    ) 
+    ) %>% 
+  add_n() %>%
+  bold_labels() %>%
+  italicize_levels()
+
+```
